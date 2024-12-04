@@ -1,68 +1,128 @@
--- Запрос для получения всех рейсов с фильтрацией по дате
-SELECT *
-FROM FLIGHT
-WHERE DEPARTURE_DATE > CURRENT_TIMESTAMP
-ORDER BY DEPARTURE_DATE;
+-- SELECT create_booking('Credit Card', 1, 1, ARRAY [160]);
 
--- Запрос для получения информации о клиенте по email
-SELECT *
-FROM CUSTOMER
-WHERE EMAIL = 'john@example.com';
+-- 1. Общее количество забронированных мест (эконом- и бизнес-класса) в каждом рейсе
+SELECT F.FLIGHT_NUMBER,
+       SUM(FB.ECONOMY_CLASS_SEATS_BOOKED)  AS TOTAL_ECONOMY_SEATS_BOOKED,
+       SUM(FB.BUSINESS_CLASS_SEATS_BOOKED) AS TOTAL_BUSINESS_SEATS_BOOKED
+FROM FLIGHT F
+         JOIN
+     FLIGHT_BOOKINGS FB ON F.FLIGHT_BOOKING_ID = FB.FLIGHT_BOOKING_ID
+GROUP BY F.FLIGHT_NUMBER;
 
--- Запрос для получения всех бронирований клиента
-SELECT *
-FROM BOOKING
-WHERE CUSTOMER_ID = 1;
-
--- Запрос для получения информации о рейсах с количеством забронированных мест
-SELECT *
-FROM flight_info
-WHERE ECONOMY_CLASS_SEATS_BOOKED > 0;
-
--- Запрос для получения отчета о загруженности рейсов
-SELECT *
-FROM flight_load_report;
-
--- Запрос для получения информации о рейсах с использованием подзапроса
-SELECT *
-FROM FLIGHT
-WHERE FLIGHT_ID IN (SELECT FLIGHT_ID FROM BOOKING WHERE CUSTOMER_ID = 1);
-
--- Запрос для получения клиентов с количеством бронирований
-SELECT C.CUSTOMER_ID, C.FIRST_NAME, C.LAST_NAME, COUNT(B.BOOKING_ID) AS BOOKING_COUNT
+-- 2. Данные покупателя, ID заказа, количество пассажиров, прикрепленных к заказу
+SELECT C.CUSTOMER_ID,
+       C.FIRST_NAME,
+       C.LAST_NAME,
+       B.BOOKING_ID,
+       COUNT(P.PASSENGER_ID) AS NUMBER_OF_PASSENGERS
 FROM CUSTOMER C
-         LEFT JOIN BOOKING B ON C.CUSTOMER_ID = B.CUSTOMER_ID
+         JOIN
+     BOOKING B ON C.CUSTOMER_ID = B.CUSTOMER_ID
+         LEFT JOIN
+     PASSENGER P ON B.BOOKING_ID = P.BOOKING_ID
+GROUP BY C.CUSTOMER_ID, B.BOOKING_ID;
+
+-- 3. Рейсы без заказов (нет таких)
+SELECT F.FLIGHT_NUMBER,
+       F.DEPARTURE_DATE,
+       F.ARRIVAL_DATE
+FROM FLIGHT F
+         LEFT JOIN
+     BOOKING B ON F.FLIGHT_ID = B.FLIGHT_ID
+WHERE B.BOOKING_ID IS NULL;
+
+-- 4. Самый популярный способ платежа
+SELECT PAYMENT_METHOD,
+       COUNT(*) AS NUMBER_OF_BOOKINGS
+FROM BOOKING
+GROUP BY PAYMENT_METHOD
+ORDER BY NUMBER_OF_BOOKINGS DESC
+LIMIT 1;
+
+-- 5. Средняя цена билета в эконом- и бизнес-классе
+SELECT 'Economy'                         AS SERVICE_CLASS,
+       AVG(S.ECONOMY_CLASS_TICKET_PRICE) AS AVERAGE_TICKET_PRICE
+FROM SERVICE_CLASSES_INFO S
+UNION ALL
+SELECT 'Business'                         AS SERVICE_CLASS,
+       AVG(S.BUSINESS_CLASS_TICKET_PRICE) AS AVERAGE_TICKET_PRICE
+FROM SERVICE_CLASSES_INFO S;
+
+-- 6. Рейсы, в которых больше, чем X заказов
+SELECT F.FLIGHT_NUMBER,
+       COUNT(B.BOOKING_ID) AS TOTAL_BOOKINGS
+FROM FLIGHT F
+         JOIN
+     BOOKING B ON F.FLIGHT_ID = B.FLIGHT_ID
+GROUP BY F.FLIGHT_NUMBER
+HAVING COUNT(B.BOOKING_ID) > 2;
+
+-- 7. История заказов покупателя (покупатель с ID = 2)
+SELECT C.FIRST_NAME,
+       C.LAST_NAME,
+       B.BOOKING_ID,
+       B.BOOKING_DATE_TIME,
+       F.FLIGHT_NUMBER,
+       F.DEPARTURE_DATE,
+       F.ARRIVAL_DATE
+FROM CUSTOMER C
+         JOIN
+     BOOKING B ON C.CUSTOMER_ID = B.CUSTOMER_ID
+         JOIN
+     FLIGHT F ON B.FLIGHT_ID = F.FLIGHT_ID
+WHERE C.CUSTOMER_ID = 2;
+
+-- 8. Сотрудники и рейсы, на которые они назначены
+SELECT E.FIRST_NAME,
+       E.LAST_NAME,
+       E.OCCUPATION,
+       F.FLIGHT_NUMBER
+FROM EMPLOYEE E
+         JOIN
+     FLIGHT_SERVICE FS ON E.FLIGHT_SERVICE_ID = FS.FLIGHT_SERVICE_ID
+         JOIN
+     FLIGHT F ON FS.FLIGHT_SERVICE_ID = F.FLIGHT_SERVICE_ID;
+
+-- 9. Booking Count by Month
+SELECT DATE_TRUNC('month', B.BOOKING_DATE_TIME) AS MONTH,
+       COUNT(B.BOOKING_ID)                      AS TOTAL_BOOKINGS
+FROM BOOKING B
+GROUP BY MONTH
+ORDER BY MONTH;
+
+-- 10. Рейсы с проблемой вместимости (количество забронированных мест превышает реальную вместимость самолета, у нас такого нет, всё хорошо)
+SELECT F.FLIGHT_NUMBER,
+       A.MODEL,
+       (FB.ECONOMY_CLASS_SEATS_BOOKED + FB.BUSINESS_CLASS_SEATS_BOOKED) AS TOTAL_BOOKED_SEATS,
+       A.CAPACITY
+FROM FLIGHT F
+         JOIN
+     FLIGHT_BOOKINGS FB ON F.FLIGHT_BOOKING_ID = FB.FLIGHT_BOOKING_ID
+         JOIN
+     FLIGHT_SERVICE FS ON F.FLIGHT_SERVICE_ID = FS.FLIGHT_SERVICE_ID
+         JOIN
+     AIRCRAFT A ON FS.AIRCRAFT_ID = A.AIRCRAFT_ID
+WHERE (FB.ECONOMY_CLASS_SEATS_BOOKED + FB.BUSINESS_CLASS_SEATS_BOOKED) > A.CAPACITY;
+
+-- 11. Топ 5 покупателей по количеству заказов
+SELECT C.CUSTOMER_ID,
+       C.FIRST_NAME,
+       C.LAST_NAME,
+       COUNT(B.BOOKING_ID) AS TOTAL_BOOKINGS
+FROM CUSTOMER C
+         JOIN
+     BOOKING B ON C.CUSTOMER_ID = B.CUSTOMER_ID
 GROUP BY C.CUSTOMER_ID
-HAVING COUNT(B.BOOKING_ID) > 0;
+ORDER BY TOTAL_BOOKINGS DESC
+LIMIT 5;
 
--- Запрос для получения рейсов с использованием внешнего соединения
-SELECT F.FLIGHT_NUMBER, A.NAME AS DEPARTURE_AIRPORT, A2.NAME AS ARRIVAL_AIRPORT
+-- 12. Отчет о загруженности рейсов со средним количеством забронированных мест (среди эконом- и бизнес-класса)
+SELECT F.FLIGHT_NUMBER,
+       COUNT(B.BOOKING_ID)                                                 AS TOTAL_BOOKINGS,
+       AVG(FB.ECONOMY_CLASS_SEATS_BOOKED + FB.BUSINESS_CLASS_SEATS_BOOKED) AS AVERAGE_SEATS_BOOKED
 FROM FLIGHT F
-         LEFT JOIN AIRPORT A ON F.DEPARTURE_AIRPORT_ID = A.AIRPORT_ID
-         LEFT JOIN AIRPORT A2 ON F.ARRIVAL_AIRPORT_ID = A2.AIRPORT_ID;
-
--- Запрос для получения информации о рейсах с фильтрацией по классу обслуживания
-SELECT F.FLIGHT_NUMBER, SCI.ECONOMY_CLASS_TOTAL_SEATS, FB.ECONOMY_CLASS_SEATS_BOOKED
-FROM FLIGHT F
-         JOIN SERVICE_CLASSES_INFO SCI ON F.SERVICE_CLASSES_INFO_ID = SCI.SERVICE_CLASSES_INFO_ID
-         JOIN FLIGHT_BOOKINGS FB ON F.FLIGHT_BOOKING_ID = FB.FLIGHT_BOOKING_ID
-WHERE SCI.ECONOMY_CLASS_TOTAL_SEATS > FB.ECONOMY_CLASS_SEATS_BOOKED;
-
--- Запрос для получения информации о клиентах с использованием подзапроса
-SELECT *
-FROM CUSTOMER
-WHERE CUSTOMER_ID IN (SELECT CUSTOMER_ID FROM BOOKING WHERE FLIGHT_ID = 1);
-
--- Запрос для получения всех рейсов с количеством забронированных мест и сортировкой по загруженности
-SELECT F.FLIGHT_NUMBER, FB.ECONOMY_CLASS_SEATS_BOOKED, FB.BUSINESS_CLASS_SEATS_BOOKED
-FROM FLIGHT F
-         JOIN FLIGHT_BOOKINGS FB ON F.FLIGHT_BOOKING_ID = FB.FLIGHT_BOOKING_ID
-ORDER BY (FB.ECONOMY_CLASS_SEATS_BOOKED + FB.BUSINESS_CLASS_SEATS_BOOKED) DESC;
-
--- Запрос для получения информации о рейсах с использованием объединения
-SELECT FLIGHT_NUMBER
-FROM FLIGHT
-UNION
-SELECT FLIGHT_NUMBER
-FROM FLIGHT
-WHERE DEPARTURE_DATE < CURRENT_TIMESTAMP;
+         LEFT JOIN
+     BOOKING B ON F.FLIGHT_ID = B.FLIGHT_ID
+         LEFT JOIN
+     FLIGHT_BOOKINGS FB ON F.FLIGHT_BOOKING_ID = FB.FLIGHT_BOOKING_ID
+GROUP BY F.FLIGHT_NUMBER;
